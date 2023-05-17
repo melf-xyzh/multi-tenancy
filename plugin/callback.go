@@ -6,6 +6,7 @@
 package plugin
 
 import (
+	"errors"
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -23,12 +24,6 @@ func (mt *MultiTenancy) registerCallbacks(db *gorm.DB) {
 	mt.Callback().Raw().Before("*").Register("gorm:multi-tenancy", mt.rawBeforeCallback)
 }
 
-// createBeforeCallback
-/**
- *  @Description: 创建记录前的回调函数
- *  @receiver mt
- *  @param db
- */
 func (mt *MultiTenancy) createBeforeCallback(db *gorm.DB) {
 	if !mt.DataIsolation(db) {
 		fmt.Println("不需要进行数据隔离")
@@ -36,14 +31,18 @@ func (mt *MultiTenancy) createBeforeCallback(db *gorm.DB) {
 	}
 	// 获取租户ID
 	tenantId := mt.getTenantIdByModel(db)
-	if tenantId != "" {
-		// 切换数据库连接池
-		db.Statement.ConnPool = mt.dbMap[tenantId].ConnPool
+	if db.Error != nil {
+		return
 	}
-	// 在数据库中建表
-	err := db.AutoMigrate(db.Statement.Model)
-	if err != nil {
-		panic(err)
+	// 根据租户ID切换数据库
+	mt.getAndSwitchDBConnPool(db, tenantId)
+	if db.Error != nil {
+		return
+	}
+	// 对数据库进行迁移
+	mt.AutoMigrate(db)
+	if db.Error != nil {
+		return
 	}
 }
 
@@ -54,10 +53,19 @@ func (mt *MultiTenancy) queryBeforeCallback(db *gorm.DB) {
 	}
 	// 获取租户ID
 	tenantId := mt.getTenantIdBySql(db)
-	if tenantId != "" {
-		// 切换数据库连接池
-		db.Statement.ConnPool = mt.dbMap[tenantId].ConnPool
+	if db.Error != nil {
+		return
 	}
+	// 根据租户ID切换数据库
+	mt.getAndSwitchDBConnPool(db, tenantId)
+	if db.Error != nil {
+		return
+	}
+	//// 对数据库进行迁移
+	//mt.AutoMigrate(db)
+	//if db.Error != nil {
+	//	return
+	//}
 }
 
 func (mt *MultiTenancy) updateBeforeCallback(db *gorm.DB) {
@@ -67,9 +75,18 @@ func (mt *MultiTenancy) updateBeforeCallback(db *gorm.DB) {
 	}
 	// 获取租户ID
 	tenantId := mt.getTenantIdBySql(db)
-	if tenantId != "" {
-		// 切换数据库连接池
-		db.Statement.ConnPool = mt.dbMap[tenantId].ConnPool
+	if db.Error != nil {
+		return
+	}
+	// 根据租户ID切换数据库
+	mt.getAndSwitchDBConnPool(db, tenantId)
+	if db.Error != nil {
+		return
+	}
+	// 对数据库进行迁移
+	mt.AutoMigrate(db)
+	if db.Error != nil {
+		return
 	}
 }
 
@@ -80,12 +97,19 @@ func (mt *MultiTenancy) deleteBeforeCallback(db *gorm.DB) {
 	}
 	// 获取租户ID
 	tenantId := mt.getTenantIdBySql(db)
-	fmt.Println(tenantId)
-	if tenantId != "" {
-		// 切换数据库连接池
-		db.Statement.ConnPool = mt.dbMap[tenantId].ConnPool
+	if db.Error != nil {
+		return
 	}
-	fmt.Println("数据库切换完成")
+	// 根据租户ID切换数据库
+	mt.getAndSwitchDBConnPool(db, tenantId)
+	if db.Error != nil {
+		return
+	}
+	// 对数据库进行迁移
+	mt.AutoMigrate(db)
+	if db.Error != nil {
+		return
+	}
 }
 
 func (mt *MultiTenancy) rowBeforeCallback(db *gorm.DB) {
@@ -94,6 +118,25 @@ func (mt *MultiTenancy) rowBeforeCallback(db *gorm.DB) {
 
 func (mt *MultiTenancy) rawBeforeCallback(db *gorm.DB) {
 
+}
+
+// AutoMigrate
+/**
+ *  @Description: 数据迁移
+ *  @receiver mt
+ *  @param db
+ *  @return bool
+ */
+func (mt *MultiTenancy) AutoMigrate(db *gorm.DB) {
+	model := db.Statement.Model
+	if model != nil {
+		// 在数据库中建表
+		err := db.AutoMigrate(&model)
+		if err != nil {
+			fmt.Println("自动迁移异常")
+		}
+	}
+	return
 }
 
 // DataIsolation
@@ -122,6 +165,46 @@ func (mt *MultiTenancy) DataIsolation(db *gorm.DB) (dataIsolation bool) {
 	return
 }
 
+// getDBConnPool
+/**
+ *  @Description: 获取连接池
+ *  @receiver mt
+ *  @param tenantId
+ *  @return connPoll
+ */
+func (mt *MultiTenancy) newError(errorStr string) (err error) {
+	return errors.New(fmt.Sprintf("【gorm:multi-tenancy】%s", errorStr))
+}
+
+// getDBConnPool
+/**
+ *  @Description: 获取连接池
+ *  @receiver mt
+ *  @param tenantId
+ *  @return connPoll
+ */
+func (mt *MultiTenancy) getAndSwitchDBConnPool(db *gorm.DB, tenantId string) {
+	// 根据租户ID切换数据库
+	if tenantId == "" {
+		db.Error = mt.newError("未检测到租户标识")
+		return
+	}
+	// 获取数据库连接
+	_, ok := mt.dbMap[tenantId]
+	if !ok {
+		// 如果该数据库没有连接，则创建数据库连接
+		conn, errDB := mt.tConn.CreateDBConn(tenantId)
+		if errDB != nil {
+			db.Error = mt.newError(errDB.Error())
+			return
+		}
+		mt.dbMap[tenantId] = conn
+	}
+	// 切换数据库连接池
+	db.Statement.ConnPool = mt.dbMap[tenantId].ConnPool
+	return
+}
+
 // getTenantIdBySql
 /**
  *  @Description: 通过Sql获取写入的数据库
@@ -133,7 +216,8 @@ func (mt *MultiTenancy) getTenantIdBySql(db *gorm.DB) (tenantId string) {
 	defer func() { tenantId = strings.TrimSpace(tenantId) }()
 	whereClauses, ok := db.Statement.Clauses["WHERE"].Expression.(clause.Where)
 	if !ok {
-		panic("未检测到 WHERE 子句")
+		db.Error = mt.newError("未检测到 WHERE 子句")
+		return
 	}
 	var build strings.Builder
 	for i, expr := range whereClauses.Exprs {
@@ -186,10 +270,12 @@ func (mt *MultiTenancy) getTenantIdByModel(db *gorm.DB) (tenantId string) {
 					}
 					tenantIdi, ok = fieldValue.(string)
 					if !ok {
-						panic("断言失败，仅支持string类型字段分库")
+						db.Error = mt.newError("断言失败，仅支持string类型字段分库")
+						return
 					}
 					if tenantId != "" && tenantIdi != tenantId {
-						panic("不支持批量插入到不同的数据库")
+						db.Error = mt.newError("不支持批量插入到不同的数据库")
+						return
 					}
 					tenantId = tenantIdi
 				}
@@ -202,7 +288,8 @@ func (mt *MultiTenancy) getTenantIdByModel(db *gorm.DB) (tenantId string) {
 				}
 				tenantId, ok = fieldValue.(string)
 				if !ok {
-					panic("断言失败，仅支持string类型字段分库")
+					db.Error = mt.newError("断言失败，仅支持string类型字段分库")
+					return
 				}
 			}
 		}

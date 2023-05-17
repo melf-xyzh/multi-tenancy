@@ -25,30 +25,30 @@ go get -u github.com/melf-xyzh/multi-tenancy
 
 ### 使用方法
 
-初始化多个数据库链接
+实现 `TenantDBConn` 接口，这样可以保证该租户的数据库链接按需创建，不使用不创建，避免占用链接资源
 
 ```go
-dsn := "root:123456789@tcp(127.0.0.1:3306)/test1?charset=utf8mb4&parseTime=True&loc=Local"
-db1, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+type TenantConn struct{}
 
-dsn = "root:123456789@tcp(127.0.0.1:3306)/test2?charset=utf8mb4&parseTime=True&loc=Local"
-db2, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-
-dsn = "root:123456789@tcp(127.0.0.1:3306)/test3?charset=utf8mb4&parseTime=True&loc=Local"
-db3, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+func (c TenantConn) CreateDBConn(tenant string) (db *gorm.DB, err error) {
+	// 参考 https://github.com/go-sql-driver/mysql#dsn-data-source-name 获取详情
+	dsn := "root:123456789@tcp(127.0.0.1:3306)/test" + tenant + "?charset=utf8mb4&parseTime=True&loc=Local"
+	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	return
+}
 ```
 
 注册并使用插件
 
 ```go
-dbMap := map[string]*gorm.DB{
-    "1": db1,
-    "2": db2,
-}
+// 链接主数据库
+dsn := "root:123456789@tcp(127.0.0.1:3306)/test1?charset=utf8mb4&parseTime=True&loc=Local"
+db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+
+// 注册并使用
 mt := &plugin.MultiTenancy{}
-mt.Register(dbMap, "merchant_no")
-mt.AddDB("3", db3)
-db1.Use(mt)
+mt.Register("merchant_no", TenantConn{})
+db.Use(mt)
 ```
 
 简单使用

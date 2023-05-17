@@ -14,8 +14,14 @@ const (
 	defaultTenantTag = "tenant_id"
 )
 
+// TenantDBConn 数据库连接接口
+type TenantDBConn interface {
+	CreateDBConn(tenant string) (db *gorm.DB, err error)
+}
+
 // MultiTenancy 多租户数据隔离插件
 type MultiTenancy struct {
+	tConn TenantDBConn
 	*gorm.DB
 	tenantTag string
 	dbMap     map[string]*gorm.DB
@@ -39,8 +45,9 @@ func (mt *MultiTenancy) Initialize(db *gorm.DB) error {
  *  @param tenantTag 数据隔离字段标识
  *  @return *MultiTenancy
  */
-func (mt *MultiTenancy) Register(dbMap map[string]*gorm.DB, tenantTag string) *MultiTenancy {
-	mt.dbMap = dbMap
+func (mt *MultiTenancy) Register(tenantTag string, conn TenantDBConn) *MultiTenancy {
+	mt.dbMap = make(map[string]*gorm.DB)
+	mt.tConn = conn
 	mt.tenantTag = tenantTag
 	return mt
 }
