@@ -28,7 +28,7 @@ type MultiTenancy struct {
 	tenantTag     string
 	dbMap         map[string]*gorm.DB
 	tableMap      map[string]map[string]struct{}
-	dataIsolation map[string]interface{}
+	dataIsolation map[string]Model
 }
 
 func (mt *MultiTenancy) Name() string {
