@@ -1,7 +1,8 @@
 # multi-tenancy
+
 gorm多租户插件，实现租户数据库层面的数据隔离
 
-### 说明
+## 说明
 
 场景的数据隔离方案：
 
@@ -17,13 +18,15 @@ gorm多租户插件，实现租户数据库层面的数据隔离
 
   在数据表中新增`TenantID`字段，通过字段进行数据隔离
 
-### 安装
+## 安装
 
 ```bash
 go get -u github.com/melf-xyzh/multi-tenancy
 ```
 
-### 使用方法
+## 使用方法
+
+### 数据隔离（自动分库）
 
 实现 `TenantDBConn` 接口，这样可以保证该租户的数据库链接按需创建，不使用不创建，避免占用链接资源
 
@@ -67,9 +70,25 @@ func (User) TableName() string {
 func (User) DataIsolation() bool {
 	return true
 }
+
+// 对需要分库的表在此进行注册
+plugin.MTPlugin.SetDataIsolation(
+    User{},
+)
 ```
 
+### 分布式ID（雪花ID）
 
+```go
+var Generator *id.DistributedIdGenerator
+ 
+Generator, err := id.InitDistributedIdGenerator("", 0)
+if err != nil {
+    global.LOG.Error("初始化雪花ID生成器失败")
+    return
+}
+```
 
+### 字段加密保存
 
-
+待实现……

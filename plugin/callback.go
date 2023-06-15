@@ -11,9 +11,15 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/utils"
+	"log"
 	"reflect"
 	"strings"
 )
+
+type Model interface {
+	TableName() string
+	DataIsolation() bool
+}
 
 func (mt *MultiTenancy) registerCallbacks(db *gorm.DB) {
 	mt.Callback().Create().Before("*").Register("gorm:multi-tenancy", mt.createBeforeCallback)
@@ -25,7 +31,8 @@ func (mt *MultiTenancy) registerCallbacks(db *gorm.DB) {
 }
 
 func (mt *MultiTenancy) createBeforeCallback(db *gorm.DB) {
-	if !mt.DataIsolation(db) {
+	ok := mt.DataIsolation(db)
+	if !ok {
 		fmt.Println("不需要进行数据隔离")
 		return
 	}
@@ -40,16 +47,19 @@ func (mt *MultiTenancy) createBeforeCallback(db *gorm.DB) {
 		return
 	}
 	// 对数据库进行迁移
-	mt.AutoMigrate(db)
+	mt.createAutoMigrate(tenantId, db)
 	if db.Error != nil {
 		return
 	}
 }
 
 func (mt *MultiTenancy) queryBeforeCallback(db *gorm.DB) {
-	if !mt.DataIsolation(db) {
+	ok := mt.DataIsolation(db)
+	if !ok {
 		fmt.Println("不需要进行数据隔离")
 		return
+	} else {
+		fmt.Println("正在进行Query数据隔离")
 	}
 	// 获取租户ID
 	tenantId := mt.getTenantIdBySql(db)
@@ -61,15 +71,16 @@ func (mt *MultiTenancy) queryBeforeCallback(db *gorm.DB) {
 	if db.Error != nil {
 		return
 	}
-	//// 对数据库进行迁移
-	//mt.AutoMigrate(db)
-	//if db.Error != nil {
-	//	return
-	//}
+	// 对数据库进行迁移
+	mt.createAutoMigrate(tenantId, db)
+	if db.Error != nil {
+		return
+	}
 }
 
 func (mt *MultiTenancy) updateBeforeCallback(db *gorm.DB) {
-	if !mt.DataIsolation(db) {
+	ok := mt.DataIsolation(db)
+	if !ok {
 		fmt.Println("不需要进行数据隔离")
 		return
 	}
@@ -84,14 +95,15 @@ func (mt *MultiTenancy) updateBeforeCallback(db *gorm.DB) {
 		return
 	}
 	// 对数据库进行迁移
-	mt.AutoMigrate(db)
+	mt.createAutoMigrate(tenantId, db)
 	if db.Error != nil {
 		return
 	}
 }
 
 func (mt *MultiTenancy) deleteBeforeCallback(db *gorm.DB) {
-	if !mt.DataIsolation(db) {
+	ok := mt.DataIsolation(db)
+	if !ok {
 		fmt.Println("不需要进行数据隔离")
 		return
 	}
@@ -106,35 +118,85 @@ func (mt *MultiTenancy) deleteBeforeCallback(db *gorm.DB) {
 		return
 	}
 	// 对数据库进行迁移
-	mt.AutoMigrate(db)
+	mt.createAutoMigrate(tenantId, db)
 	if db.Error != nil {
 		return
 	}
 }
 
 func (mt *MultiTenancy) rowBeforeCallback(db *gorm.DB) {
-
+	fmt.Println("rowBeforeCallback")
 }
 
 func (mt *MultiTenancy) rawBeforeCallback(db *gorm.DB) {
-
+	fmt.Println("rowBeforeCallback")
 }
 
-// AutoMigrate
+// createAutoMigrate
 /**
  *  @Description: 数据迁移
  *  @receiver mt
  *  @param db
  *  @return bool
  */
-func (mt *MultiTenancy) AutoMigrate(db *gorm.DB) {
+func (mt *MultiTenancy) createAutoMigrate(tenantId string, db *gorm.DB) {
+	if mt.tableMap == nil {
+		mt.tableMap = make(map[string]map[string]struct{})
+	}
+	_, ok := mt.tableMap[tenantId]
+	if !ok {
+		mt.tableMap[tenantId] = make(map[string]struct{})
+	}
+	table := db.Statement.Table
+	_, ok = mt.tableMap[tenantId][table]
+	if ok {
+		// 不需要建表
+		return
+	}
+
+	// 自动迁移
+	// 获取建表需要的Struct
 	model := db.Statement.Model
-	if model != nil {
-		// 在数据库中建表
-		err := db.AutoMigrate(&model)
+	t := reflect.TypeOf(model)
+	switch t.Kind() {
+	case reflect.Struct:
+		err := db.AutoMigrate(model)
 		if err != nil {
-			fmt.Println("自动迁移异常")
+			db.Error = err
+			return
 		}
+	case reflect.Ptr:
+		// 获取指针指向的值
+		valueOf := reflect.ValueOf(model).Elem().Interface()
+		typeOf := reflect.TypeOf(valueOf)
+		// 解决 "runtime error: invalid memory address or nil pointer dereference"
+		model = reflect.New(typeOf)
+		// 自动迁移
+		err := db.AutoMigrate(model)
+		if err != nil {
+			db.Error = err
+			return
+		}
+	}
+}
+
+// SetDataIsolation
+/**
+ *  @Description: 获取数据隔离字段标识
+ *  @receiver mt
+ *  @return string
+ */
+func (mt *MultiTenancy) SetDataIsolation(model ...interface{}) (err error) {
+	if mt.dataIsolation == nil {
+		mt.dataIsolation = make(map[string]interface{})
+	}
+	for _, m := range model {
+		v, ok := m.(Model)
+		if !ok {
+			log.Println("未实现model接口")
+			return
+		}
+		mt.dataIsolation[v.TableName()] = m
 	}
 	return
 }
@@ -144,33 +206,30 @@ func (mt *MultiTenancy) AutoMigrate(db *gorm.DB) {
  *  @Description: 是否进行数据隔离
  *  @receiver mt
  *  @param db
- *  @return bool
+ *  @return dataIsolation
  */
 func (mt *MultiTenancy) DataIsolation(db *gorm.DB) (dataIsolation bool) {
-	model := db.Statement.Model
-	v := reflect.ValueOf(model)
-	// 获取方法
-	if f1 := v.MethodByName("DataIsolation"); f1.IsValid() {
-		answer := f1.Call([]reflect.Value{})
-		if len(answer) == 0 {
-			dataIsolation = false
-		} else {
-			// 将函数的结果传递该变量
-			dataIsolation = answer[0].Bool()
-		}
-	} else {
-		// 不存在此方法，认为该表不需要进行数据隔离
-		dataIsolation = false
+	model, ok := mt.dataIsolation[db.Statement.Table]
+	if ok {
+		b := model.(Model)
+		dataIsolation = b.DataIsolation()
+		return
+	}
+	model, ok = mt.dataIsolation[db.Statement.Schema.Table]
+	if ok {
+		b := model.(Model)
+		dataIsolation = b.DataIsolation()
+		return
 	}
 	return
 }
 
-// getDBConnPool
+// newError
 /**
- *  @Description: 获取连接池
+ *  @Description: 封装Err
  *  @receiver mt
- *  @param tenantId
- *  @return connPoll
+ *  @param errorStr
+ *  @return err
  */
 func (mt *MultiTenancy) newError(errorStr string) (err error) {
 	return errors.New(fmt.Sprintf("【gorm:multi-tenancy】%s", errorStr))

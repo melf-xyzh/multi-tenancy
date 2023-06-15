@@ -19,12 +19,16 @@ type TenantDBConn interface {
 	CreateDBConn(tenant string) (db *gorm.DB, err error)
 }
 
+var MTPlugin *MultiTenancy
+
 // MultiTenancy 多租户数据隔离插件
 type MultiTenancy struct {
 	tConn TenantDBConn
 	*gorm.DB
-	tenantTag string
-	dbMap     map[string]*gorm.DB
+	tenantTag     string
+	dbMap         map[string]*gorm.DB
+	tableMap      map[string]map[string]struct{}
+	dataIsolation map[string]interface{}
 }
 
 func (mt *MultiTenancy) Name() string {
@@ -49,6 +53,7 @@ func (mt *MultiTenancy) Register(tenantTag string, conn TenantDBConn) *MultiTena
 	mt.dbMap = make(map[string]*gorm.DB)
 	mt.tConn = conn
 	mt.tenantTag = tenantTag
+	MTPlugin = mt
 	return mt
 }
 
@@ -64,6 +69,34 @@ func (mt *MultiTenancy) AddDB(tenantId string, db *gorm.DB) {
 		mt.dbMap = make(map[string]*gorm.DB)
 	}
 	mt.dbMap[tenantId] = db
+	return
+}
+
+// GetDBByTenantId
+/**
+ *  @Description: 利用租户标识获取数据库
+ *  @receiver mt
+ *  @param tenantId
+ *  @return db
+ *  @return err
+ */
+func (mt *MultiTenancy) GetDBByTenantId(tenantId string) (db *gorm.DB, err error) {
+	if mt.dbMap == nil {
+		mt.dbMap = make(map[string]*gorm.DB)
+	}
+	var ok bool
+	// 获取数据库连接
+	db, ok = mt.dbMap[tenantId]
+	if !ok {
+		// 如果该数据库没有连接，则创建数据库连接
+		conn, errDB := mt.tConn.CreateDBConn(tenantId)
+		if errDB != nil {
+			db.Error = mt.newError(errDB.Error())
+			return
+		}
+		mt.dbMap[tenantId] = conn
+		db = conn
+	}
 	return
 }
 
