@@ -71,6 +71,16 @@ func (User) DataIsolation() bool {
 	return true
 }
 
+// 注册自动迁移方法
+func (User) AutoMigrate(db *gorm.DB, tableName string) (err error) {
+	if tableName == "" {
+		err = db.AutoMigrate(User{})
+	} else {
+		err = db.Table(tableName).AutoMigrate(User{})
+	}
+	return
+}
+
 // 对需要分库的表在此进行注册
 plugin.MTPlugin.SetDataIsolation(
     User{},
@@ -91,4 +101,23 @@ if err != nil {
 
 ### 字段加密保存
 
-待实现……
+对结构体写入`mt` Tag
+
+```go
+type User struct {
+	id.Model
+	Name  string `json:"name"     mt:"-"           gorm:"column:name;comment:姓名;type:varchar(50);"`
+	Phone string `json:"phone"    mt:"encrypt"     gorm:"column:phone;comment:手机号;type:varchar(255);"`
+}
+```
+
+此结构体对phone字段进行了加密保存、更新、查询
+
+```go
+mt := &plugin.MultiTenancy{}
+mt.Register("merchant_no", TenantConn{})
+db.Use(mt)
+// 开启字段加密保存
+mt.SetEncryptedSave(encrypt, decrypt)
+```
+

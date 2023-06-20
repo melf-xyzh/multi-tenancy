@@ -25,10 +25,16 @@ var MTPlugin *MultiTenancy
 type MultiTenancy struct {
 	tConn TenantDBConn
 	*gorm.DB
-	tenantTag     string
-	dbMap         map[string]*gorm.DB
-	tableMap      map[string]map[string]struct{}
-	dataIsolation map[string]Model
+	tenantTag           string
+	dbMap               map[string]*gorm.DB
+	tableMap            map[string]map[string]struct{}
+	dataIsolation       map[string]Model
+	tagMap              map[string]MultiTenancyTag
+	needEncryptDBFields map[string]struct{}
+	needEncryptFields   map[string]struct{}
+	encryptedSave       bool
+	encrypt             func(data string) (cipherTxt string, err error) // 加密函数
+	decrypt             func(cipherTxt string) (data string, err error) // 解密函数
 }
 
 func (mt *MultiTenancy) Name() string {
@@ -111,4 +117,27 @@ func (mt *MultiTenancy) getTenantTag() string {
 		return mt.tenantTag
 	}
 	return defaultTenantTag
+}
+
+// SetEncryptedSave
+/**
+ *  @Description: 注册加密存储
+ *  @receiver mt
+ *  @param encrypt
+ *  @param decrypt
+ */
+func (mt *MultiTenancy) SetEncryptedSave(encrypt func(data string) (cipherTxt string, err error), decrypt func(cipherTxt string) (data string, err error)) {
+	mt.encryptedSave = true
+	mt.encrypt = encrypt
+	mt.decrypt = decrypt
+	if mt.tagMap == nil {
+		mt.tagMap = make(map[string]MultiTenancyTag)
+	}
+	if mt.needEncryptDBFields == nil {
+		mt.needEncryptDBFields = make(map[string]struct{})
+	}
+	if mt.needEncryptFields == nil {
+		mt.needEncryptFields = make(map[string]struct{})
+	}
+	return
 }

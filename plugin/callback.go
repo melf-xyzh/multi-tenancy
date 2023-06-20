@@ -22,12 +22,18 @@ type Model interface {
 }
 
 func (mt *MultiTenancy) registerCallbacks(db *gorm.DB) {
+	// 分库存储
 	mt.Callback().Create().Before("*").Register("gorm:multi-tenancy", mt.createBeforeCallback)
 	mt.Callback().Query().Before("*").Register("gorm:multi-tenancy", mt.queryBeforeCallback)
 	mt.Callback().Update().Before("*").Register("gorm:multi-tenancy", mt.updateBeforeCallback)
 	mt.Callback().Delete().Before("*").Register("gorm:multi-tenancy", mt.deleteBeforeCallback)
 	mt.Callback().Row().Before("*").Register("gorm:multi-tenancy", mt.rowBeforeCallback)
 	mt.Callback().Raw().Before("*").Register("gorm:multi-tenancy", mt.rawBeforeCallback)
+	// 加密存储
+	mt.Callback().Create().Before("*").Register("gorm:multi-tenancy-encrypt", mt.encryptCreateBeforeCallback)
+	mt.Callback().Query().Before("*").Register("gorm:multi-tenancy-encrypt", mt.encryptQueryBeforeCallback)
+	mt.Callback().Update().Before("*").Register("gorm:multi-tenancy-encrypt", mt.encryptUpdateBeforeCallback)
+	mt.Callback().Query().After("*").Register("gorm:multi-tenancy-decrypt", mt.decryptQueryAfterCallback)
 }
 
 func (mt *MultiTenancy) createBeforeCallback(db *gorm.DB) {
@@ -38,13 +44,16 @@ func (mt *MultiTenancy) queryBeforeCallback(db *gorm.DB) {
 	mt.commonCallback(db, mt.getTenantIdBySql)
 }
 
-func (mt *MultiTenancy) commonCallback(db *gorm.DB, gettenantId func(db *gorm.DB) (tenantId string)) {
+func (mt *MultiTenancy) commonCallback(db *gorm.DB, getTenantId func(db *gorm.DB) (tenantId string)) {
+	if db.Error != nil {
+		return
+	}
 	model, ok := mt.DataIsolation(db)
 	if !ok {
 		return
 	}
 	// 获取租户ID
-	tenantId := gettenantId(db)
+	tenantId := getTenantId(db)
 	if db.Error != nil {
 		return
 	}
@@ -54,6 +63,7 @@ func (mt *MultiTenancy) commonCallback(db *gorm.DB, gettenantId func(db *gorm.DB
 		return
 	}
 	mt.AutoMigrate(db, tenantId, model)
+
 }
 
 // AutoMigrate
